@@ -19,7 +19,7 @@ NS_LOG_COMPONENT_DEFINE ("fuentes12");
 
 Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqueteIn,
   uint32_t tamPaqueteOut, uint32_t usuariosXbus, uint32_t numSwitches,
-  uint32_t numServidores, double retardo, double modoSeleccion);
+  uint32_t numServidores, double retardo, uint16_t modoSeleccion);
 
 int seleccionaServidor(uint32_t numServidores, uint16_t modoSeleccion, double * servidor);
 
@@ -54,6 +54,9 @@ main (int argc, char *argv[])
   cmd.AddValue ("modoSelección", "Modo de selección del servidor", modoSeleccion);
   cmd.Parse (argc,argv);
 
+  simulacion (tasaMediaIn, tasaMediaOut, tamPaqueteIn, tamPaqueteOut, usuariosXbus,
+    numSwitches, numServidores, retardo, modoSeleccion);
+
   return 0;
 }
 
@@ -70,25 +73,29 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   // Variable para calcular los estadisticos
   Observador observador;
 
-  // Creacion de servidores con conexion P2P a un switch
+  // Creacion de los nodos p2p (servidores y gateway)
+  NS_LOG_INFO("Creando los nodos p2p...");
   NodeContainer p2pNodes;
   p2pNodes.Create (numServidores+1);
 
   // Creacion de bus CSMA de switches
+  NS_LOG_INFO("Creando los buses CMSA de gateways...");
   NodeContainer csmaSwitchesNodes;
   csmaSwitchesNodes.Add (p2pNodes.Get (0));
   csmaSwitchesNodes.Create (numSwitches);
 
   // Creacion de bus CSMA en cada switch con n equipos
+  NS_LOG_INFO("Creando los buses CSMA de los equipos usuarios...");
   NodeContainer csmaUsuariosNodes [numSwitches];
   for (uint32_t i=0; i<numSwitches; i++)
   {
-    csmaUsuariosNodes[i].Add (p2pNodes.Get (i));
+    csmaUsuariosNodes[i].Add (csmaSwitchesNodes.Get (i));
     csmaUsuariosNodes[i].Create (usuariosXbus);
   }
 
   // Instalacion de los servidores a los P2P con el switch
   // El nodo 0 es el switch y el resto los servidores conectados a el
+  NS_LOG_INFO("Instalando las conexiones p2p...");
   PointToPointHelper pointToPoint [numServidores];
   NetDeviceContainer p2pDevices [numServidores];
   for(uint32_t i=0; i<numServidores; i++)
@@ -99,6 +106,7 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   }
 
   // Instalacion del bus CSMA de switches
+  NS_LOG_INFO("Instalando las conexiones del bus CSMA de los gateways...");
   CsmaHelper csmaSwitches;
   NetDeviceContainer csmaSwitchesDevices;
   csmaSwitches.SetChannelAttribute ("DataRate", StringValue ("54Mbps"));
@@ -106,6 +114,7 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   csmaSwitchesDevices = csmaSwitches.Install (csmaSwitchesNodes);
 
   // Instalacion de los buses CSMA de los usuarios conectados a cada switch
+  NS_LOG_INFO("Instalando las conexiones de los buses CSMA de los equipos usuario con su respectivo gateway...");
   CsmaHelper csmaUsuarios [numSwitches];
   NetDeviceContainer csmaUsuariosDevices [numSwitches];
   for(uint32_t i=0; i<numSwitches; i++)
@@ -116,6 +125,7 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   }
 
   // Instalamos la pila TCP/IP en todos los nodos
+  NS_LOG_INFO("Instalando la pila TCP/IP en todos los nodos...");
   InternetStackHelper stack;
   for(uint32_t i=1; i<=numServidores; i++)
   {
@@ -131,6 +141,8 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   }
 
   // Asignamos direcciones a cada una de las interfaces
+  NS_LOG_INFO("Asignando direcciones IP,");
+  NS_LOG_INFO("a los nodos p2p...");
   Ipv4AddressHelper address;
   Ipv4InterfaceContainer p2pInterfaces [numServidores];
   for(uint32_t i=0; i<numServidores; i++)
@@ -141,10 +153,14 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
     p2pInterfaces[i] = address.Assign (p2pDevices[i]);
   }
 
+  NS_LOG_INFO("a los nodos CSMA encargados de hacer de gateways...");
   Ipv4InterfaceContainer csmaSwitchesInterfaces;
-  address.SetBase ("10.1.2.0", "255.255.255.0");
+  std::ostringstream network;
+  network << "10.1." << (numServidores+1) << ".0";
+  address.SetBase (network.str ().c_str (), "255.255.255.0");
   csmaSwitchesInterfaces = address.Assign (csmaSwitchesDevices);
 
+  NS_LOG_INFO("y a los nodos CSMA de los equipos usuario...");
   Ipv4InterfaceContainer csmaUsuariosInterfaces [numSwitches];
   for(uint32_t i=0; i<numSwitches; i++)
   {
@@ -158,9 +174,11 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   //     nodos de la red de área local definen que para acceder
   //     al nodo del otro extremo del enlace punto a punto deben
   //     utilizar el primer nodo como ruta por defecto.
+  NS_LOG_INFO("Calculando rutas del escenario...");
   Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
   // Creamos las aplicaciones serveridoras UDP en los nodos servidores y en los nodos de los jugadores
+  NS_LOG_INFO("Creando las aplicaciones servidor UDP");
   uint16_t port = 5000;
   UdpServerHelper server (port);
   NodeContainer serverNodes;
@@ -182,12 +200,14 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
   serverApps.Stop (Seconds (10.0));
 
   // Creamos las aplicaciones clientes UDP en los nodos clientes eligiendo el servidor de forma aleatoria...
+  NS_LOG_INFO("Creando las aplicaciones cliente UDP y de ping");
   Time interPacketInterval = Seconds (0.025);   //... y las aplicaciones clientes en los servidores que han sido elegidos
   uint32_t maxPacketCount = 10000;
   UdpClientHelper client[numSwitches*usuariosXbus];
   ApplicationContainer clientApps;
   UdpClientHelper serv[numSwitches*usuariosXbus];
-  
+  ApplicationContainer pingApps;
+
   for(uint32_t i=0; i<numSwitches; i++)
   {
     for(uint32_t j=0; j<usuariosXbus; j++)
@@ -203,7 +223,7 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
       clientApps.Add (client[i*usuariosXbus+j].Install (csmaUsuariosNodes[i].Get (j)));
 
       //Ya Conocemos el servidor elegido y el equipo que lo elige, instalamos el cliente en dicho servidor
-      //poniendo como servAddress la dirección del equipo que lo ha elegido. 
+      //poniendo como servAddress la dirección del equipo que lo ha elegido.
 
       Address servAddress = Address (csmaUsuariosInterfaces[i].GetAddress (j));
       serv[i*usuariosXbus+j].SetAttribute ("RemoteAddress", AddressValue (servAddress));
@@ -212,17 +232,28 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
       serv[i*usuariosXbus+j].SetAttribute ("Interval", TimeValue (interPacketInterval));
       serv[i*usuariosXbus+j].SetAttribute ("PacketSize", UintegerValue (tamPaqueteOut));
       clientApps.Add (serv[i*usuariosXbus+j].Install (p2pNodes.Get (servidor)));
+
+      // E instalamos las aplicaciones de ping en el cliente
+      V4PingHelper ping = V4PingHelper (p2pInterfaces[(int)servidor].GetAddress (1));
+      NodeContainer pingers;
+      pingers.Add (csmaUsuariosNodes[i].Get (j));
+      pingApps.Add (ping.Install (pingers));
     }
   }
   clientApps.Start (Seconds (2.0));
   clientApps.Stop (Seconds (10.0));
+  pingApps.Start (Seconds (2.0));
+  pingApps.Stop (Seconds (10.0));
 
-
+  NS_LOG_INFO("Habilitando pcap del equipo usuario nº1 del bus csma 1...");
+  csmaUsuarios[1].EnablePcap ("trabajo-psr", csmaUsuariosDevices[1].Get (1), true);
 
 
   // Lanzamos la simulación
+  NS_LOG_INFO("Simulando...");
   Simulator::Run ();
   Simulator::Destroy ();
+  NS_LOG_INFO("¡Hecho!");
 
   return observador;
 }
@@ -230,11 +261,11 @@ Observador simulacion (double tasaMediaIn, double tasaMediaOut, uint32_t tamPaqu
 //Función que devuelve un número aleatorio que será el servidor asignado.
 int seleccionaServidor(uint32_t numServidores, uint16_t modoSeleccion, double * servidor)
 {
-  
+
   if(modoSeleccion == ALEATORIO)
   {
     double min = 0.0;
-    double max = numServidores; 
+    double max = numServidores;
     Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable> ();           //el máximo está fuera del intervalo que devuelve.
     x->SetAttribute ("Min", DoubleValue (min));
     x->SetAttribute ("Max", DoubleValue (max));
